@@ -223,3 +223,5 @@ If this project were ever adapted beyond an educational simulation:
    tooling; this codebase intentionally does not implement remote control.
 5. Conduct a full security review (secrets management, rate limiting, WAF,
    dependency scanning) before any production use.
+
+# cbe1
