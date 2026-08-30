@@ -760,6 +760,48 @@ class AuditLog(db.Model):
         }
 
 
+DASHBOARD_METRIC_FIELDS = [
+    "total_branches", "total_atms", "operational_atms", "offline_atms",
+    "atm_errors", "pending_tickets", "in_progress_tickets", "resolved_tickets",
+    "network_installations", "completed_installations", "pending_installations",
+    "computers_with_problems", "active_technicians",
+]
+
+
+class DailyMetricSnapshot(db.Model):
+    """One row per calendar day holding the dashboard KPI values for that
+    day. Powers real (non-fabricated) trend arrows / sparklines on the
+    dashboard. A row is upserted every time /api/dashboard/summary is
+    requested, so it always reflects the latest known value for 'today'."""
+    __tablename__ = "daily_metric_snapshots"
+
+    id = db.Column(db.Integer, primary_key=True)
+    snapshot_date = db.Column(db.Date, nullable=False, unique=True, index=True)
+
+    total_branches = db.Column(db.Integer, default=0)
+    total_atms = db.Column(db.Integer, default=0)
+    operational_atms = db.Column(db.Integer, default=0)
+    offline_atms = db.Column(db.Integer, default=0)
+    atm_errors = db.Column(db.Integer, default=0)
+    pending_tickets = db.Column(db.Integer, default=0)
+    in_progress_tickets = db.Column(db.Integer, default=0)
+    resolved_tickets = db.Column(db.Integer, default=0)
+    network_installations = db.Column(db.Integer, default=0)
+    completed_installations = db.Column(db.Integer, default=0)
+    pending_installations = db.Column(db.Integer, default=0)
+    computers_with_problems = db.Column(db.Integer, default=0)
+    active_technicians = db.Column(db.Integer, default=0)
+
+    created_at = db.Column(db.DateTime, default=now)
+    updated_at = db.Column(db.DateTime, default=now, onupdate=now)
+
+    def to_dict(self):
+        d = {"date": self.snapshot_date.isoformat()}
+        for f in DASHBOARD_METRIC_FIELDS:
+            d[f] = getattr(self, f)
+        return d
+
+
 def log_action(user, action, description="", ip_address=None):
     entry = AuditLog(
         user_id=user.id if user else None,

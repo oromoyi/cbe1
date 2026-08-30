@@ -3,46 +3,74 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>CBE District IT · Operations Console</title>
+<title>CBE District IT Management System</title>
+<meta name="description" content="Commercial Bank of Ethiopia — District IT Infrastructure & Remote Support Management System" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="js/chart.umd.min.js"></script>
 <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
+
+  <!-- PAGE PROGRESS BAR -->
+  <div id="page-progress"><div id="page-progress-bar"></div></div>
+
   <div id="toast-root" class="toast-root"></div>
+
+  <!-- CONFIRM DIALOG -->
+  <div id="confirm-overlay" class="confirm-overlay hidden">
+    <div class="confirm-card">
+      <div class="confirm-icon" id="confirm-icon">⚠️</div>
+      <div class="confirm-title" id="confirm-title">Are you sure?</div>
+      <div class="confirm-msg" id="confirm-msg"></div>
+      <div class="confirm-actions">
+        <button class="btn btn-ghost" id="confirm-cancel-btn">Cancel</button>
+        <button class="btn btn-danger" id="confirm-ok-btn">Confirm</button>
+      </div>
+    </div>
+  </div>
 
   <!-- LOGIN SCREEN -->
   <div id="login-screen" class="login-screen">
     <div class="login-grid-bg"></div>
+    <!-- floating orbs -->
+    <div class="login-orb login-orb-1"></div>
+    <div class="login-orb login-orb-2"></div>
     <div class="login-card">
       <div class="login-brand">
-        <div class="brand-mark">CBE</div>
+        <div class="brand-logo-wrap">
+          <img src="css/cbe_logo.jpg" alt="CBE Logo" class="brand-logo-img" />
+        </div>
         <div class="brand-text">
-          <div class="brand-title">District IT Console</div>
-          <div class="brand-sub">Infrastructure &amp; Remote Support Operations</div>
+          <div class="brand-title">CBE District IT Management System</div>
+          <div class="brand-sub">Commercial Bank of Ethiopia &mdash; District Office</div>
         </div>
       </div>
       <form id="login-form" class="login-form">
         <label class="field">
           <span>Username</span>
-          <input type="text" id="login-username" autocomplete="username" required />
+          <div class="field-icon-wrap">
+            <span class="field-icon">👤</span>
+            <input type="text" id="login-username" autocomplete="username" placeholder="Enter your username" required />
+          </div>
         </label>
         <label class="field">
           <span>Password</span>
-          <input type="password" id="login-password" autocomplete="current-password" required />
+          <div class="field-icon-wrap">
+            <span class="field-icon">🔑</span>
+            <input type="password" id="login-password" autocomplete="current-password" placeholder="Enter your password" required />
+          </div>
         </label>
         <div id="login-error" class="login-error hidden"></div>
-        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+        <button type="submit" class="btn btn-primary btn-block" id="login-btn">
+          <span class="btn-text">Sign In</span>
+          <span class="btn-spinner hidden"></span>
+        </button>
       </form>
-      <div class="login-demo">
-        <div class="login-demo-title">Simulation-mode demo accounts</div>
-        <div class="demo-row"><span>District IT Admin</span><code>admin / Admin@123</code></div>
-        <div class="demo-row"><span>District Technician</span><code>tech1 / Tech@123</code></div>
-        <div class="demo-row"><span>Branch Manager</span><code>mgr.add001 / Manager@123</code></div>
-        <div class="demo-row"><span>Branch Employee</span><code>employee / Employee@123</code></div>
+      <div class="login-footer-bar">
+        <span class="login-footer-secure">🔒 Secure Access Portal</span>
+        <span class="login-footer-credit">&copy; 2025 <strong>Deressa Fufa</strong></span>
       </div>
-      <div class="login-footnote">Educational simulation system. Not connected to real CBE infrastructure.</div>
     </div>
   </div>
 
@@ -50,15 +78,25 @@
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-brand">
-        <div class="brand-mark small">CBE</div>
+        <div class="sidebar-logo-wrap">
+          <img src="css/cbe_logo.jpg" alt="CBE Logo" class="sidebar-logo-img" />
+        </div>
         <div>
-          <div class="sidebar-title">District IT</div>
-          <div class="sidebar-sub">Ops Console</div>
+          <div class="sidebar-title">CBE District IT</div>
+          <div class="sidebar-sub">Management System</div>
         </div>
       </div>
       <nav class="sidebar-nav" id="sidebar-nav"></nav>
       <div class="sidebar-footer">
-        <div class="sim-badge" id="sim-badge">SIMULATION MODE</div>
+        <div class="sidebar-user-info" id="sidebar-user-info">
+          <div class="sidebar-user-avatar" id="sidebar-user-avatar">U</div>
+          <div class="sidebar-user-details">
+            <div class="sidebar-user-name" id="sidebar-user-name">—</div>
+            <div class="sidebar-user-role" id="sidebar-user-role">—</div>
+          </div>
+        </div>
+        <div class="sidebar-last-login" id="sidebar-last-login"></div>
+        <div class="sim-badge" id="sim-badge">⚡ SIMULATION MODE</div>
       </div>
     </aside>
 
@@ -66,22 +104,40 @@
       <header class="topbar">
         <button class="icon-btn menu-toggle" id="menu-toggle" aria-label="Toggle menu">☰</button>
         <div class="topbar-search">
-          <input type="text" id="global-search" placeholder="Search branches, ATMs, tickets, employees…" />
+          <span class="search-icon">🔍</span>
+          <input type="text" id="global-search" placeholder="Search branches, ATMs, tickets… (Press /)" />
           <div id="search-results" class="search-results hidden"></div>
         </div>
         <div class="topbar-actions">
+          <div class="topbar-clock" id="topbar-clock">
+            <div class="clock-time" id="clock-time">--:--</div>
+            <div class="clock-date" id="clock-date">---</div>
+          </div>
           <button class="icon-btn" id="notif-btn" title="Notifications">
             🔔<span id="notif-count" class="badge-dot hidden">0</span>
           </button>
           <div id="notif-panel" class="notif-panel hidden"></div>
+          <!-- User Profile Chip -->
           <div class="user-chip" id="user-chip">
             <div class="user-avatar" id="user-avatar">U</div>
             <div class="user-meta">
               <div id="user-name" class="user-name">—</div>
               <div id="user-role" class="user-role">—</div>
             </div>
+            <span class="user-chip-caret">▾</span>
           </div>
-          <button class="btn btn-ghost" id="logout-btn">Sign out</button>
+          <!-- User Dropdown -->
+          <div class="user-dropdown hidden" id="user-dropdown">
+            <div class="user-dropdown-header">
+              <div class="user-dropdown-avatar" id="user-dropdown-avatar">U</div>
+              <div>
+                <div class="user-dropdown-name" id="user-dropdown-name">—</div>
+                <div class="user-dropdown-role" id="user-dropdown-role">—</div>
+              </div>
+            </div>
+            <div class="user-dropdown-divider"></div>
+            <button class="user-dropdown-item" id="logout-btn">🚪 Sign Out</button>
+          </div>
         </div>
       </header>
 

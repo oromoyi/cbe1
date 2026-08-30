@@ -14,6 +14,7 @@ from models import (
     NetworkInstallation, NetworkEquipment, CHECKLIST_ITEMS, Computer,
     ITTicket, TicketComment, Incident, Asset, MaintenanceRecord,
     RemoteSupportSession, Notification, AuditLog,
+    DailyMetricSnapshot, DASHBOARD_METRIC_FIELDS,
 )
 
 random.seed(42)
@@ -52,7 +53,7 @@ def main(app=None):
 
         # --- Users & core admin/technician accounts ---
         print("Creating users...")
-        admin = User(full_name="Girum Tesfaye", username="admin", email="admin@cbe-it.local", role="district_admin")
+        admin = User(full_name="Debi Tolessa", username="admin", email="admin@cbe-it.local", role="district_admin")
         admin.set_password(os.environ.get("ADMIN_PASSWORD", "Admin@123"))
         db.session.add(admin)
         db.session.commit()
@@ -433,6 +434,26 @@ def main(app=None):
                 ip_address=f"192.168.{random.randint(1,20)}.{random.randint(2,254)}",
                 created_at=days_ago(random.randint(0, 60)),
             ))
+        db.session.commit()
+
+        # --- Daily KPI snapshot history (for real, not-fabricated, dashboard trends) ---
+        print("Backfilling 14 days of dashboard KPI history...")
+        from routes.dashboard_routes import compute_summary_metrics
+        today_metrics = compute_summary_metrics()
+        for i in range(13, -1, -1):
+            snap_date = date.today() - timedelta(days=i)
+            row = DailyMetricSnapshot(snapshot_date=snap_date)
+            for field in DASHBOARD_METRIC_FIELDS:
+                base = today_metrics[field]
+                if i == 0:
+                    value = base  # today matches the live computed values exactly
+                else:
+                    # Gentle randomized walk back from today's real value so the
+                    # sparkline looks like plausible recent history, never negative.
+                    jitter = round(base * random.uniform(-0.12, 0.12) * (i / 13))
+                    value = max(0, base - jitter)
+                setattr(row, field, value)
+            db.session.add(row)
         db.session.commit()
 
         print("\nSeed complete!\n")

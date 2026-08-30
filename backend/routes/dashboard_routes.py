@@ -1,19 +1,20 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 from sqlalchemy import func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from models import (
     db, Branch, ATM, ATMError, NetworkInstallation, Computer, ITTicket,
-    Technician, Incident,
+    Technician, Incident, DailyMetricSnapshot, DASHBOARD_METRIC_FIELDS,
 )
 
 bp = Blueprint("dashboard", __name__, url_prefix="/api/dashboard")
 
 
-@bp.get("/summary")
-@jwt_required()
-def summary():
+def compute_summary_metrics():
+    """Compute the current live values for every dashboard KPI. Shared by
+    the /summary endpoint and the daily snapshot capture (and by seed.py
+    when backfilling demo history) so there is a single source of truth."""
     total_branches = Branch.query.count()
     total_atms = ATM.query.count()
     operational_atms = ATM.query.filter_by(status="ONLINE").count()
@@ -37,7 +38,7 @@ def summary():
     ).count()
     active_technicians = Technician.query.filter_by(is_active=True).count()
 
-    return jsonify({
+    return {
         "total_branches": total_branches,
         "total_atms": total_atms,
         "operational_atms": operational_atms,
@@ -51,7 +52,72 @@ def summary():
         "pending_installations": pending_installations,
         "computers_with_problems": computers_with_problems,
         "active_technicians": active_technicians,
-    })
+    }
+
+
+def capture_today_snapshot(metrics):
+    """Upsert today's DailyMetricSnapshot row with the given metrics dict.
+    Safe to call repeatedly during the day — it just keeps 'today' current."""
+    today = date.today()
+    row = DailyMetricSnapshot.query.filter_by(snapshot_date=today).first()
+    if not row:
+        row = DailyMetricSnapshot(snapshot_date=today)
+        db.session.add(row)
+    for field in DASHBOARD_METRIC_FIELDS:
+        setattr(row, field, metrics.get(field, 0))
+    db.session.commit()
+
+
+@bp.get("/summary")
+@jwt_required()
+def summary():
+    metrics = compute_summary_metrics()
+    try:
+        capture_today_snapshot(metrics)
+    except Exception:
+        db.session.rollback()  # never let snapshot bookkeeping break the dashboard
+    return jsonify(metrics)
+
+
+@bp.get("/trends")
+@jwt_required()
+def trends():
+    """Real (not fabricated) trend data for the KPI sparklines/arrows,
+    built from the daily snapshot history. Days without a snapshot yet
+    (e.g. a freshly-deployed instance) simply aren't included — the
+    frontend shows a flat '—' for metrics with fewer than 2 data points."""
+    days = min(int(request.args.get("days", 14)), 90)
+    since = date.today() - timedelta(days=days - 1)
+    rows = (
+        DailyMetricSnapshot.query
+        .filter(DailyMetricSnapshot.snapshot_date >= since)
+        .order_by(DailyMetricSnapshot.snapshot_date.asc())
+        .all()
+    )
+
+    result = {}
+    dates = [r.snapshot_date.isoformat() for r in rows]
+    for field in DASHBOARD_METRIC_FIELDS:
+        series = [getattr(r, field) for r in rows]
+        if len(series) >= 2 and series[0] != 0:
+            change_pct = round(((series[-1] - series[0]) / abs(series[0])) * 100, 1)
+        elif len(series) >= 2:
+            change_pct = 100.0 if series[-1] > 0 else 0.0
+        else:
+            change_pct = 0.0
+        if len(series) < 2 or series[-1] == series[0]:
+            direction = "flat"
+        elif series[-1] > series[0]:
+            direction = "up"
+        else:
+            direction = "down"
+        result[field] = {
+            "series": series,
+            "change_pct": change_pct,
+            "direction": direction,
+        }
+
+    return jsonify({"dates": dates, "metrics": result})
 
 
 @bp.get("/charts")

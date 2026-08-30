@@ -1,5 +1,7 @@
 /* API client for the CBE District IT Management System */
-const API_BASE = "/api";
+const isLocalFrontend = (!window.location.hostname || ["localhost", "127.0.0.1"].includes(window.location.hostname))
+  && window.location.port !== "5000";
+const API_BASE = isLocalFrontend ? "http://localhost:5000/api" : "/api";
 
 const Session = {
   get token() { return localStorage.getItem("cbe_token"); },
@@ -42,11 +44,13 @@ const Api = {
   // Auth
   login: (username, password) => apiRequest("POST", "/auth/login", { username, password }, { silent401: true }),
   me: () => apiRequest("GET", "/auth/me"),
+  get: (path) => apiRequest("GET", path),
   changePassword: (old_password, new_password) => apiRequest("POST", "/auth/change-password", { old_password, new_password }),
 
   // Dashboard
   dashboardSummary: () => apiRequest("GET", "/dashboard/summary"),
   dashboardCharts: () => apiRequest("GET", "/dashboard/charts"),
+  dashboardTrends: (days = 14) => apiRequest("GET", `/dashboard/trends?days=${days}`),
 
   // Branches
   listBranches: (params = "") => apiRequest("GET", `/branches${params}`),
