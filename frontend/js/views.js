@@ -16,108 +16,251 @@ function pageHeader(title, sub, actionsHtml = "") {
 
 /* ============================= DASHBOARD ============================= */
 Views.dashboard = async (root) => {
-  root.innerHTML = `<div class="empty-state">Loading district overview…</div>`;
-
-  if (typeof Chart === "undefined") {
-    root.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">⚠</div>
-        Chart.js failed to load. Refresh the page or restart the app to reload the dashboard assets.
-      </div>
-    `;
-    return;
-  }
-
-  const [summary, charts] = await Promise.all([Api.dashboardSummary(), Api.dashboardCharts()]);
-  destroyCharts();
-
+  // Show skeleton while loading
   root.innerHTML = `
-    ${pageHeader("District IT Overview", "Real-time (simulated) status across all CBE branches under this district office.")}
-    <div class="kpi-grid">
-      ${kpi("Branches", summary.total_branches, "accent")}
-      ${kpi("Total ATMs", summary.total_atms, "accent")}
-      ${kpi("Operational ATMs", summary.operational_atms, "green")}
-      ${kpi("Offline ATMs", summary.offline_atms, "red")}
-      ${kpi("Open ATM Errors", summary.atm_errors, "yellow")}
-      ${kpi("Pending Tickets", summary.pending_tickets, "blue")}
-      ${kpi("In-progress Tickets", summary.in_progress_tickets, "yellow")}
-      ${kpi("Resolved Tickets", summary.resolved_tickets, "green")}
-      ${kpi("Network Installations", summary.network_installations, "accent")}
-      ${kpi("Completed Installs", summary.completed_installations, "green")}
-      ${kpi("Pending Installs", summary.pending_installations, "blue")}
-      ${kpi("Computers w/ Problems", summary.computers_with_problems, "red")}
-      ${kpi("Active Technicians", summary.active_technicians, "accent")}
+    ${pageHeader('District IT Overview', 'Live infrastructure status across all CBE branches managed by this district office.')}
+    <div class="skeleton-kpi-grid">
+      ${Array(8).fill('<div class="skeleton skeleton-kpi"></div>').join('')}
     </div>
-
-    <div class="chart-grid">
-      <div class="panel"><div class="panel-title">ATM Status Distribution</div><div class="chart-wrap"><canvas id="c-atm-status"></canvas></div></div>
-      <div class="panel"><div class="panel-title">IT Incidents by Branch</div><div class="chart-wrap"><canvas id="c-incidents-branch"></canvas></div></div>
-      <div class="panel"><div class="panel-title">ATM Error Types</div><div class="chart-wrap"><canvas id="c-error-types"></canvas></div></div>
-      <div class="panel"><div class="panel-title">Monthly Support Requests</div><div class="chart-wrap"><canvas id="c-monthly"></canvas></div></div>
-      <div class="panel"><div class="panel-title">Network Installation Progress</div><div class="chart-wrap"><canvas id="c-install-progress"></canvas></div></div>
-      <div class="panel"><div class="panel-title">Resolved vs Unresolved Tickets</div><div class="chart-wrap"><canvas id="c-resolved"></canvas></div></div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-title">Branch Status Map</div>
-      <div id="branch-tiles" class="branch-status-grid"></div>
+    <div class="chart-grid" style="margin-bottom:20px">
+      ${Array(4).fill('<div class="skeleton skeleton-panel"></div>').join('')}
     </div>
   `;
 
-  const palette = ["#7C5CFF", "#4C9EFF", "#34D399", "#F5B93D", "#F0576B", "#E0A93A", "#6672A0"];
-  const chartDefaults = {
-    plugins: { legend: { labels: { color: "#9AA3C4", font: { size: 11 } } } },
-    scales: { x: { ticks: { color: "#6672A0" }, grid: { color: "#1D253F" } }, y: { ticks: { color: "#6672A0" }, grid: { color: "#1D253F" } } },
+  if (typeof Chart === 'undefined') {
+    root.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div>Chart.js failed to load. Please refresh the page.</div>`;
+    return;
+  }
+
+  const [summary, charts, branches, trends] = await Promise.all([
+    Api.dashboardSummary(), Api.dashboardCharts(), Api.listBranches(),
+    Api.dashboardTrends(14).catch(() => null),
+  ]);
+  destroyCharts();
+  const trendFor = (key) => trends && trends.metrics ? trends.metrics[key] : null;
+
+  // Compute system health
+  const atmHealth = summary.total_atms > 0 ? Math.round((summary.operational_atms / summary.total_atms) * 100) : 0;
+  const healthColor = atmHealth >= 80 ? 'green' : atmHealth >= 50 ? 'yellow' : 'red';
+  const healthLabel = atmHealth >= 80 ? 'Healthy' : atmHealth >= 50 ? 'Degraded' : 'Critical';
+
+  // Fetch recent audit activity
+  let recentActivity = [];
+  try { recentActivity = (await Api.get('/audit-logs?limit=8')) || []; } catch { recentActivity = []; }
+
+  const activityDotColor = (action) => {
+    if (!action) return '';
+    const a = action.toLowerCase();
+    if (a.includes('create') || a.includes('resolve') || a.includes('complete')) return 'green';
+    if (a.includes('delete') || a.includes('error') || a.includes('fail')) return 'red';
+    if (a.includes('update') || a.includes('assign')) return 'yellow';
+    return '';
   };
 
-  chartInstances.atmStatus = new Chart(document.getElementById("c-atm-status"), {
-    type: "doughnut",
-    data: { labels: Object.keys(charts.atm_status), datasets: [{ data: Object.values(charts.atm_status), backgroundColor: palette }] },
-    options: { plugins: chartDefaults.plugins, cutout: "62%" },
+  root.innerHTML = `
+    ${pageHeader('District IT Overview', 'Live infrastructure status across all CBE branches managed by this district office.')}
+
+    <!-- System Status Banner -->
+    <div class="status-banner">
+      <div class="status-banner-title">System Status</div>
+      <div class="status-indicator">
+        <span class="dot ${healthColor}"></span>
+        <strong>${healthLabel}</strong> — ATM Health ${atmHealth}%
+      </div>
+      <div class="status-indicator">
+        <span class="dot ${summary.pending_tickets > 10 ? 'yellow' : 'green'}"></span>
+        ${summary.pending_tickets} pending tickets
+      </div>
+      <div class="status-indicator">
+        <span class="dot ${summary.atm_errors > 5 ? 'red' : summary.atm_errors > 0 ? 'yellow' : 'green'}"></span>
+        ${summary.atm_errors} open ATM errors
+      </div>
+      <div class="status-indicator">
+        <span class="dot ${summary.computers_with_problems > 0 ? 'yellow' : 'green'}"></span>
+        ${summary.computers_with_problems} computers flagged
+      </div>
+      <div style="margin-left:auto;font-size:11px;color:var(--text-faint)">
+        Updated: ${new Date().toLocaleTimeString()}
+      </div>
+    </div>
+
+    <!-- KPI Grid -->
+    <div class="kpi-grid">
+      ${kpi('Branches', summary.total_branches, 'accent', '🏢', trendFor('total_branches'))}
+      ${kpi('Total ATMs', summary.total_atms, 'accent', '🏧', trendFor('total_atms'))}
+      ${kpi('Operational ATMs', summary.operational_atms, 'green', '✅', trendFor('operational_atms'))}
+      ${kpi('Offline ATMs', summary.offline_atms, 'red', '🔴', trendFor('offline_atms'), true)}
+      ${kpi('Open ATM Errors', summary.atm_errors, 'yellow', '⚠️', trendFor('atm_errors'), true)}
+      ${kpi('Open Tickets', summary.pending_tickets, 'blue', '🎫', trendFor('pending_tickets'), true)}
+      ${kpi('In-progress Tickets', summary.in_progress_tickets, 'yellow', '🔧', trendFor('in_progress_tickets'))}
+      ${kpi('Resolved Tickets', summary.resolved_tickets, 'green', '✔️', trendFor('resolved_tickets'))}
+      ${kpi('Network Projects', summary.network_installations, 'accent', '🌐', trendFor('network_installations'))}
+      ${kpi('Completed Installs', summary.completed_installations, 'green', '📶', trendFor('completed_installations'))}
+      ${kpi('Pending Installs', summary.pending_installations, 'blue', '⏳', trendFor('pending_installations'))}
+      ${kpi('Computers Flagged', summary.computers_with_problems, 'red', '💻', trendFor('computers_with_problems'), true)}
+      ${kpi('Active Technicians', summary.active_technicians, 'accent', '👷', trendFor('active_technicians'))}
+    </div>
+
+    <!-- Charts -->
+    <div class="chart-grid">
+      <div class="panel"><div class="panel-title">🏧 ATM Status Distribution</div><div class="chart-wrap"><canvas id="c-atm-status"></canvas></div></div>
+      <div class="panel"><div class="panel-title">🚨 Incidents by Branch</div><div class="chart-wrap"><canvas id="c-incidents-branch"></canvas></div></div>
+      <div class="panel"><div class="panel-title">⚠️ ATM Error Types</div><div class="chart-wrap"><canvas id="c-error-types"></canvas></div></div>
+      <div class="panel"><div class="panel-title">📈 Monthly Support Requests</div><div class="chart-wrap"><canvas id="c-monthly"></canvas></div></div>
+      <div class="panel"><div class="panel-title">🌐 Installation Progress</div><div class="chart-wrap"><canvas id="c-install-progress"></canvas></div></div>
+      <div class="panel"><div class="panel-title">🎫 Resolved vs Open Tickets</div><div class="chart-wrap"><canvas id="c-resolved"></canvas></div></div>
+    </div>
+
+    <!-- Bottom row: Quick Actions + Recent Activity + Branch Map -->
+    <div class="dash-cols" style="grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px">
+
+      <!-- Quick Actions -->
+      <div class="panel">
+        <div class="panel-title">⚡ Quick Actions</div>
+        <div class="quick-actions-grid">
+          <button class="quick-action-btn" onclick="navigate('tickets')">
+            <span class="quick-action-icon">🎫</span>New IT Ticket
+          </button>
+          <button class="quick-action-btn" onclick="navigate('incidents')">
+            <span class="quick-action-icon">🚨</span>Log Incident
+          </button>
+          <button class="quick-action-btn" onclick="navigate('atms')">
+            <span class="quick-action-icon">🏧</span>Check ATMs
+          </button>
+          <button class="quick-action-btn" onclick="navigate('remote-support')">
+            <span class="quick-action-icon">🖥</span>Remote Support
+          </button>
+          <button class="quick-action-btn" onclick="navigate('maintenance')">
+            <span class="quick-action-icon">🛠</span>Schedule Maintenance
+          </button>
+          <button class="quick-action-btn" onclick="navigate('reports')">
+            <span class="quick-action-icon">📊</span>View Reports
+          </button>
+        </div>
+      </div>
+
+      <!-- Recent Activity -->
+      <div class="panel">
+        <div class="panel-title">🕐 Recent Activity</div>
+        <div class="activity-feed" id="activity-feed">
+          ${recentActivity.length ? recentActivity.slice(0, 8).map(a => `
+            <div class="activity-item">
+              <div class="activity-dot ${activityDotColor(a.action)}"></div>
+              <div style="flex:1">
+                <div class="activity-text"><strong>${escapeHtml(a.username || 'System')}</strong> ${escapeHtml(a.action || '')} ${escapeHtml(a.resource_type || '')}</div>
+                <div class="activity-time">${timeAgo(a.created_at)}</div>
+              </div>
+            </div>
+          `).join('') : '<div style="color:var(--text-faint);font-size:12px;padding:8px 0">No recent activity.</div>'}
+        </div>
+      </div>
+
+      <!-- Branch Status -->
+      <div class="panel">
+        <div class="panel-title">🏢 Branch Status Map</div>
+        <div id="branch-tiles" class="branch-status-grid" style="grid-template-columns:repeat(auto-fill,minmax(130px,1fr))"></div>
+      </div>
+
+    </div>
+  `;
+
+  const palette = ['#6C4FFF', '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#D4943A', '#6672A0'];
+  const chartDefaults = {
+    plugins: { legend: { labels: { color: '#8891B8', font: { size: 11, family: "'Inter', sans-serif" } } } },
+    scales: {
+      x: { ticks: { color: '#4E5A80', font: { size: 11 } }, grid: { color: '#171f35' } },
+      y: { ticks: { color: '#4E5A80', font: { size: 11 } }, grid: { color: '#171f35' } }
+    },
+  };
+
+  chartInstances.atmStatus = new Chart(document.getElementById('c-atm-status'), {
+    type: 'doughnut',
+    data: { labels: Object.keys(charts.atm_status), datasets: [{ data: Object.values(charts.atm_status), backgroundColor: palette, borderWidth: 0 }] },
+    options: { plugins: { ...chartDefaults.plugins }, cutout: '65%', animation: { animateRotate: true, duration: 800 } },
   });
 
-  chartInstances.incidentsBranch = new Chart(document.getElementById("c-incidents-branch"), {
-    type: "bar",
-    data: { labels: Object.keys(charts.incidents_by_branch), datasets: [{ label: "Incidents", data: Object.values(charts.incidents_by_branch), backgroundColor: "#7C5CFF" }] },
+  chartInstances.incidentsBranch = new Chart(document.getElementById('c-incidents-branch'), {
+    type: 'bar',
+    data: { labels: Object.keys(charts.incidents_by_branch), datasets: [{ label: 'Incidents', data: Object.values(charts.incidents_by_branch), backgroundColor: '#6C4FFF', borderRadius: 4 }] },
     options: { ...chartDefaults, plugins: { legend: { display: false } } },
   });
 
-  chartInstances.errorTypes = new Chart(document.getElementById("c-error-types"), {
-    type: "pie",
-    data: { labels: Object.keys(charts.error_types), datasets: [{ data: Object.values(charts.error_types), backgroundColor: palette }] },
+  chartInstances.errorTypes = new Chart(document.getElementById('c-error-types'), {
+    type: 'pie',
+    data: { labels: Object.keys(charts.error_types), datasets: [{ data: Object.values(charts.error_types), backgroundColor: palette, borderWidth: 0 }] },
     options: { plugins: chartDefaults.plugins },
   });
 
-  chartInstances.monthly = new Chart(document.getElementById("c-monthly"), {
-    type: "line",
-    data: { labels: charts.monthly_support_requests.labels, datasets: [{ label: "Requests", data: charts.monthly_support_requests.values, borderColor: "#4C9EFF", backgroundColor: "#4C9EFF33", tension: .35, fill: true }] },
+  chartInstances.monthly = new Chart(document.getElementById('c-monthly'), {
+    type: 'line',
+    data: { labels: charts.monthly_support_requests.labels, datasets: [{ label: 'Requests', data: charts.monthly_support_requests.values, borderColor: '#3B82F6', backgroundColor: '#3B82F620', tension: .4, fill: true, pointBackgroundColor: '#3B82F6', pointRadius: 4 }] },
     options: { ...chartDefaults, plugins: { legend: { display: false } } },
   });
 
-  chartInstances.installProgress = new Chart(document.getElementById("c-install-progress"), {
-    type: "bar",
-    data: { labels: Object.keys(charts.installation_progress), datasets: [{ label: "Projects", data: Object.values(charts.installation_progress), backgroundColor: "#E0A93A" }] },
-    options: { ...chartDefaults, plugins: { legend: { display: false } }, indexAxis: "y" },
+  chartInstances.installProgress = new Chart(document.getElementById('c-install-progress'), {
+    type: 'bar',
+    data: { labels: Object.keys(charts.installation_progress), datasets: [{ label: 'Projects', data: Object.values(charts.installation_progress), backgroundColor: '#D4943A', borderRadius: 4 }] },
+    options: { ...chartDefaults, plugins: { legend: { display: false } }, indexAxis: 'y' },
   });
 
-  chartInstances.resolved = new Chart(document.getElementById("c-resolved"), {
-    type: "doughnut",
-    data: { labels: ["Resolved", "Unresolved"], datasets: [{ data: [charts.resolved_vs_unresolved.resolved, charts.resolved_vs_unresolved.unresolved], backgroundColor: ["#34D399", "#F0576B"] }] },
-    options: { plugins: chartDefaults.plugins, cutout: "62%" },
+  chartInstances.resolved = new Chart(document.getElementById('c-resolved'), {
+    type: 'doughnut',
+    data: { labels: ['Resolved', 'Unresolved'], datasets: [{ data: [charts.resolved_vs_unresolved.resolved, charts.resolved_vs_unresolved.unresolved], backgroundColor: ['#10B981', '#EF4444'], borderWidth: 0 }] },
+    options: { plugins: chartDefaults.plugins, cutout: '65%' },
   });
 
-  const branches = await Api.listBranches();
-  document.getElementById("branch-tiles").innerHTML = branches.map(b => `
+  document.getElementById('branch-tiles').innerHTML = branches.map(b => `
     <div class="branch-tile" data-branch-id="${b.id}">
       <div class="branch-tile-name">${statusDot(b.overall_it_status)}${escapeHtml(b.name)}</div>
-      <div class="branch-tile-meta">${escapeHtml(b.branch_code)} · ${b.atm_count ?? b.number_of_atms} ATMs · ${b.open_tickets ?? 0} open tickets</div>
+      <div class="branch-tile-meta">${escapeHtml(b.branch_code)}<br>${b.atm_count ?? b.number_of_atms} ATMs · ${b.open_tickets ?? 0} tickets</div>
     </div>
-  `).join("");
-  document.querySelectorAll(".branch-tile").forEach(t => t.addEventListener("click", () => navigate(`branch-detail/${t.dataset.branchId}`)));
+  `).join('');
+  document.querySelectorAll('.branch-tile').forEach(t => t.addEventListener('click', () => navigate(`branch-detail/${t.dataset.branchId}`)));
 };
 
-function kpi(label, value, color) {
-  return `<div class="kpi-card"><div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value kpi-${color}">${value ?? 0}</div></div>`;
+/* Renders a tiny inline sparkline SVG from a series of numbers. */
+function sparkline(series, color) {
+  if (!series || series.length < 2) return '';
+  const w = 100, h = 26, pad = 2;
+  const min = Math.min(...series), max = Math.max(...series);
+  const range = (max - min) || 1;
+  const step = (w - pad * 2) / (series.length - 1);
+  const points = series.map((v, i) => {
+    const x = pad + i * step;
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg class="kpi-sparkline" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>`;
+}
+
+/* trend: { series, change_pct, direction } from /api/dashboard/trends, or null/undefined
+   when history isn't available yet (e.g. a brand-new deployment).
+   invertGood: true for metrics where a rise is BAD (errors, offline counts, etc.) so
+   the arrow color reflects whether the trend is good or bad news, not just up/down. */
+function kpi(label, value, color, icon = '', trend = null, invertGood = false) {
+  const hasTrend = trend && Array.isArray(trend.series) && trend.series.length >= 2;
+  let trendHtml = '<span class="kpi-trend kpi-trend-flat">—</span>';
+  let sparkHtml = '';
+  if (hasTrend) {
+    const dir = trend.direction;
+    const isGood = dir === 'flat' ? null : invertGood ? dir === 'down' : dir === 'up';
+    const trendClass = dir === 'flat' ? 'kpi-trend-flat' : isGood ? 'kpi-trend-good' : 'kpi-trend-bad';
+    const arrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '—';
+    const pct = Math.abs(trend.change_pct);
+    trendHtml = `<span class="kpi-trend ${trendClass}" title="Last ${trend.series.length} days">${arrow} ${pct.toFixed(pct < 10 ? 1 : 0)}%</span>`;
+    const sparkColor = dir === 'flat' ? 'var(--text-faint)' : isGood ? 'var(--green)' : 'var(--red)';
+    sparkHtml = sparkline(trend.series, sparkColor);
+  }
+  return `<div class="kpi-card kpi-${color}">
+    <div class="kpi-label">${icon ? `${icon} ` : ''}${escapeHtml(label)}</div>
+    <div class="kpi-value-row">
+      <div class="kpi-value kpi-${color}">${value ?? 0}</div>
+      ${trendHtml}
+    </div>
+    ${sparkHtml}
+  </div>`;
 }
 
 /* ============================= BRANCHES ============================= */
@@ -1386,6 +1529,23 @@ Views.notifications = async (root) => {
 };
 
 /* ============================= USERS ============================= */
+async function loadProfilePhotos(container) {
+  const images = container.querySelectorAll("img[data-photo-url]");
+  await Promise.all([...images].map(async (image) => {
+    try {
+      const response = await fetch(image.dataset.photoUrl, {
+        headers: { Authorization: `Bearer ${Session.token}` },
+      });
+      if (!response.ok) return;
+      const blob = await response.blob();
+      image.src = URL.createObjectURL(blob);
+      image.removeAttribute("data-photo-url");
+    } catch {
+      // Keep the initials fallback when the image cannot be loaded.
+    }
+  }));
+}
+
 Views.users = async (root) => {
   root.innerHTML = `<div class="empty-state">Loading users…</div>`;
   const [users, branches] = await Promise.all([Api.listUsers(), Api.listBranches()]);
@@ -1405,6 +1565,7 @@ Views.users = async (root) => {
   const draw = (list) => {
     const c = document.getElementById("user-table");
     c.innerHTML = renderTable({ columns: cols, rows: list, emptyText: "No users found." });
+    loadProfilePhotos(c);
     attachRowClicks(c, list, (row) => openUserForm(branches, row));
   };
   draw(users);
@@ -1419,7 +1580,26 @@ function openUserForm(branches, existing) {
       ${field({ label: "Username", name: "username", value: existing?.username, required: !existing })}
       ${field({ label: "Email", name: "email", type: "email", value: existing?.email, required: true })}
       ${field({ label: existing ? "New Password (optional)" : "Password", name: "password", type: "password", required: !existing })}
-      ${existing ? `<div class="field"><label>Profile Photo</label><input id="profile-photo" type="file" accept="image/png,image/jpeg,image/gif,image/webp"></div>` : ""}
+      ${existing ? `<div class="field">
+        <label>Profile Photo</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input id="profile-photo" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+          <span>or</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="take-photo-btn">📷 Take Photo</button>
+        </div>
+        <div id="camera-container" class="hidden" style="margin-top:8px; border:1px solid var(--border, #ccc); border-radius:8px; padding:8px;">
+          <video id="camera-preview" autoplay playsinline style="width:100%; max-width:320px; border-radius:8px; background:#000;"></video>
+          <div style="margin-top:8px; display:flex; gap:8px;">
+            <button type="button" class="btn btn-primary btn-sm" id="capture-btn">Capture</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="close-camera-btn">Cancel</button>
+          </div>
+          <canvas id="camera-canvas" class="hidden"></canvas>
+        </div>
+        <div id="photo-preview-container" class="hidden" style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+          <img id="photo-preview-img" src="" alt="Captured photo" style="width:64px;height:64px;border-radius:50%;object-fit:cover;">
+          <button type="button" class="btn btn-ghost btn-sm" id="clear-photo-btn">Clear Camera Photo</button>
+        </div>
+      </div>` : ""}
       ${field({ label: "Role", name: "role", type: "select", value: existing?.role, required: true, options: [
         { value: "district_admin", label: "District IT Administrator" },
         { value: "technician", label: "District IT Technician" },
@@ -1442,6 +1622,51 @@ function openUserForm(branches, existing) {
         try { await Api.resetUserPassword(existing.id, password); toast("Password reset successfully.", "success"); }
         catch (err) { toast(err.message, "error"); }
       });
+
+      let stream = null;
+      let capturedBlob = null;
+      
+      const takePhotoBtn = document.getElementById("take-photo-btn");
+      if (takePhotoBtn) {
+        takePhotoBtn.onclick = async () => {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            document.getElementById("camera-preview").srcObject = stream;
+            document.getElementById("camera-container").classList.remove("hidden");
+            takePhotoBtn.disabled = true;
+          } catch (err) {
+            toast("Could not access camera: " + err.message, "error");
+          }
+        };
+        
+        document.getElementById("close-camera-btn").onclick = () => {
+          if (stream) stream.getTracks().forEach(t => t.stop());
+          document.getElementById("camera-container").classList.add("hidden");
+          takePhotoBtn.disabled = false;
+        };
+
+        document.getElementById("capture-btn").onclick = () => {
+          const video = document.getElementById("camera-preview");
+          const canvas = document.getElementById("camera-canvas");
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          canvas.getContext("2d").drawImage(video, 0, 0);
+          canvas.toBlob(blob => {
+            capturedBlob = blob;
+            document.getElementById("photo-preview-img").src = URL.createObjectURL(blob);
+            document.getElementById("photo-preview-container").classList.remove("hidden");
+            if (stream) stream.getTracks().forEach(t => t.stop());
+            document.getElementById("camera-container").classList.add("hidden");
+            takePhotoBtn.disabled = false;
+          }, "image/jpeg", 0.9);
+        };
+        
+        document.getElementById("clear-photo-btn").onclick = () => {
+          capturedBlob = null;
+          document.getElementById("photo-preview-container").classList.add("hidden");
+        };
+      }
+
       document.getElementById("user-form").addEventListener("submit", async (e) => {
         e.preventDefault();
         const data = formToObject(e.target);
@@ -1449,9 +1674,15 @@ function openUserForm(branches, existing) {
         if (!data.password) delete data.password;
         try {
           const saved = existing ? await Api.updateUser(existing.id, data) : await Api.createUser(data);
-          const photo = document.getElementById("profile-photo")?.files[0];
-          if (photo) { const upload = new FormData(); upload.append("file", photo); await Api.uploadUserPhoto(saved.id, upload); }
+          const photoInput = document.getElementById("profile-photo")?.files[0];
+          const finalPhoto = capturedBlob || photoInput;
+          if (finalPhoto) { 
+            const upload = new FormData(); 
+            upload.append("file", finalPhoto, "profile.jpg"); 
+            await Api.uploadUserPhoto(saved.id, upload); 
+          }
           toast(existing ? "User updated." : "User created.", "success");
+          if (stream) stream.getTracks().forEach(t => t.stop());
           closeModal(); navigate("users");
         } catch (err) { toast(err.message, "error"); }
       });
